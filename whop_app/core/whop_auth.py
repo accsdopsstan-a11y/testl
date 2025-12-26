@@ -7,11 +7,14 @@ According to Whop docs:
 - Embedded apps receive JWT token in `x-whop-user-token` header
 - The token is automatically included by Whop iframe for same-origin requests
 - Token contains user_id and can be validated via Whop API
+- In dev mode, token comes as `whop-dev-user-token` query parameter
 
 References:
     https://docs.whop.com/developer/guides/authentication
 """
 
+import base64
+import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -52,6 +55,58 @@ class WhopAuthError(Exception):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
+
+
+def decode_jwt_payload(token: str) -> Optional[dict]:
+    """
+    Decode JWT payload without verification.
+
+    Used for dev tokens where we trust the source (Whop dev proxy).
+    In production, tokens should be validated via Whop API.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Optional[dict]: Decoded payload or None if invalid
+    """
+    try:
+        # JWT format: header.payload.signature
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+
+        # Decode payload (second part)
+        payload = parts[1]
+        # Add padding if needed
+        padding = 4 - len(payload) % 4
+        if padding != 4:
+            payload += "=" * padding
+
+        decoded = base64.urlsafe_b64decode(payload)
+        return json.loads(decoded)
+    except Exception as e:
+        logger.error(f"Failed to decode JWT: {e}")
+        return None
+
+
+def is_dev_token(token: str) -> bool:
+    """
+    Check if token is a Whop dev token.
+
+    Dev tokens have `isDev: true` in their payload and are issued
+    by Whop's experience proxy for local development.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        bool: True if this is a dev token
+    """
+    payload = decode_jwt_payload(token)
+    if payload is None:
+        return False
+    return payload.get("isDev", False) is True
 
 
 async def validate_token_with_whop(token: str) -> dict:
@@ -121,7 +176,8 @@ def extract_token_from_request(request: Request) -> Optional[str]:
     Token extraction priority:
     1. x-whop-user-token header (production - from Whop iframe)
     2. Authorization: Bearer header (alternative method)
-    3. Query parameter 'token' (dev mode only)
+    3. Query parameter 'whop-dev-user-token' (Whop dev mode)
+    4. Query parameter 'token' (legacy dev mode)
 
     Args:
         request: FastAPI request object
@@ -139,7 +195,14 @@ def extract_token_from_request(request: Request) -> Optional[str]:
     if auth_header and auth_header.startswith("Bearer "):
         return auth_header[7:]  # Remove "Bearer " prefix
 
-    # Dev mode: Accept token from query params for testing
+    # Whop dev mode: Token passed as query parameter
+    # This is used when testing embedded apps locally
+    dev_token = request.query_params.get("whop-dev-user-token")
+    if dev_token:
+        logger.info("Using whop-dev-user-token from query params")
+        return dev_token
+
+    # Legacy dev mode: Accept token from query params
     if settings.DEV_MODE:
         query_token = request.query_params.get("token")
         if query_token:
@@ -155,6 +218,9 @@ async def get_current_user(request: Request) -> WhopUser:
 
     This is the main authentication function to use in route dependencies.
     It extracts the token, validates it with Whop API, and returns user info.
+
+    For dev tokens (isDev=true), the token is decoded locally without API call.
+    For production tokens, the token is validated via Whop API.
 
     Args:
         request: FastAPI request object
@@ -175,6 +241,34 @@ async def get_current_user(request: Request) -> WhopUser:
         )
 
     try:
+        # Check if this is a dev token - can be decoded locally
+        if is_dev_token(token):
+            payload = decode_jwt_payload(token)
+            if payload is None:
+                raise WhopAuthError("Invalid dev token", 401)
+
+            logger.info(f"Authenticated dev user: {payload.get('sub')}")
+
+            # Dev token payload structure:
+            # {
+            #   "isDev": true,
+            #   "sub": "user_xxxxx",  # user ID
+            #   "aud": "app_xxxxx",   # app ID
+            #   "iss": "urn:whopcom:exp-proxy",
+            #   "iat": ..., "exp": ...
+            # }
+            return WhopUser(
+                user_id=payload.get("sub", ""),
+                # Dev tokens don't include email/username, only user ID
+                email=None,
+                username=None,
+                profile_pic_url=None,
+                membership_id=None,
+                company_id=None,
+                experience_id=None,
+            )
+
+        # Production token - validate via Whop API
         user_data = await validate_token_with_whop(token)
 
         # Build WhopUser from API response
