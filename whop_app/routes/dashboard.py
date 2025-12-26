@@ -346,10 +346,10 @@ def _render_no_access_page(user: WhopUser) -> str:
             <h1>Subscription Required</h1>
             <p>
                 Hi {user.username or 'there'}! You need an active subscription
-                to access this app. Please purchase a membership to continue.
+                to access this app. Choose a plan to get started.
             </p>
-            <a href="#" class="btn" onclick="window.parent.postMessage('whop:open-checkout', '*')">
-                Get Access
+            <a href="/checkout/" class="btn">
+                Choose Plan
             </a>
         </div>
     </body>

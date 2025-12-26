@@ -148,11 +148,63 @@ async def init_db() -> None:
         logger.info("DATABASE_URL not set, skipping database initialization")
         return
 
+    # Import models to register them with Base.metadata
+    from core.models import User, Plan, Subscription  # noqa: F401
+
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     logger.info("Database tables created")
+
+    # Seed initial data (Free plan)
+    await seed_initial_data()
+
+
+async def seed_initial_data() -> None:
+    """
+    Create initial data if not exists.
+
+    Creates default plans like Free tier.
+    """
+    from sqlalchemy import select
+    from core.models import Plan
+
+    async with get_db_session() as session:
+        # Check if Free plan exists
+        result = await session.execute(
+            select(Plan).where(Plan.slug == "free")
+        )
+        free_plan = result.scalar_one_or_none()
+
+        if free_plan is None:
+            # Create Free plan
+            free_plan = Plan(
+                name="Free",
+                slug="free",
+                price=0.0,
+                currency="USD",
+                billing_period_days=0,  # No billing
+                description="Free tier with basic access",
+                features='["Basic access", "Community support"]',
+                is_active=True,
+            )
+            session.add(free_plan)
+            logger.info("Created Free plan")
+
+        # You can add more plans here
+        # Pro plan example (commented out):
+        # result = await session.execute(select(Plan).where(Plan.slug == "pro"))
+        # if result.scalar_one_or_none() is None:
+        #     pro_plan = Plan(
+        #         name="Pro",
+        #         slug="pro",
+        #         price=9.99,
+        #         billing_period_days=30,
+        #         description="Pro tier with full access",
+        #         features='["Full access", "Priority support", "Advanced features"]',
+        #     )
+        #     session.add(pro_plan)
 
 
 async def close_db() -> None:

@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.database import close_db, init_db, is_database_configured
+from routes.checkout import router as checkout_router
 from routes.dashboard import router as dashboard_router
 from routes.webhook_whop import router as webhook_router
 
@@ -96,6 +97,9 @@ app.add_middleware(
 # Register routers
 # Dashboard: Main app UI loaded in Whop iframe
 app.include_router(dashboard_router)
+
+# Checkout: Subscription management
+app.include_router(checkout_router)
 
 # Webhooks: Receive events from Whop
 app.include_router(webhook_router)

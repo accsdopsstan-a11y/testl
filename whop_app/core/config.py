@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     WHOP_API_KEY: str
     WEBHOOK_SECRET: str
 
-    # Optional database configuration
-    DATABASE_URL: Optional[str] = None
+    # Database configuration (SQLite by default)
+    DATABASE_URL: str = "sqlite:///./whop_app.db"
 
     # Development mode flag
     # When True:
